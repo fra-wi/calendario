@@ -414,6 +414,50 @@ function expandRecurring(ev, recurDays, weeks){
   return result;
 }
 
+// ── TOOL HANDLERS ────────────────────────────────────────────────────────
+function toolAddEvent(args){
+  let firstDate=null;
+  if(args.recurrence){
+    const instances=expandRecurring(args, args.recurrence.days, args.recurrence.weeks);
+    instances.forEach(i=>events.push(i));
+    if(instances[0])firstDate=instances[0].date;
+  } else {
+    events.push({id:Date.now().toString()+Math.random().toString(36).slice(2),
+      title:args.title,date:args.date,startTime:args.startTime,
+      endTime:args.endTime,color:args.color||'#3b5bfc',note:args.note||''});
+    firstDate=args.date;
+  }
+  saveToStorage();
+  if(firstDate){const[y,m,d]=firstDate.split('-').map(Number);cursor=new Date(y,m-1,d);}
+  render();
+  return args.recurrence ? `Aggiunti eventi ricorrenti per ${args.title}` : `Aggiunto: ${args.title} il ${args.date}`;
+}
+
+function toolDeleteEvent(args){
+  const before=events.length;
+  if(args.groupId){
+    events=events.filter(e=>e.groupId!==args.groupId);
+  } else if(args.id){
+    events=events.filter(e=>e.id!==args.id);
+  }
+  saveToStorage();render();
+  const removed=before-events.length;
+  return `Eliminat${removed===1?'o':'i'} ${removed} event${removed===1?'o':'i'}`;
+}
+
+function toolModifyEvent(args){
+  const idx=events.findIndex(e=>e.id===args.id);
+  if(idx===-1)return 'Evento non trovato';
+  events[idx]={...events[idx],...args};
+  saveToStorage();render();
+  return `Modificato: ${events[idx].title}`;
+}
+
+function toolGetEvents(){
+  if(!events.length)return 'Nessun evento nel calendario';
+  return events.map(e=>`[${e.id}] ${e.title} | ${e.date} | ${e.startTime}-${e.endTime}${e.groupId?' (ricorrente, group:'+e.groupId+')':''}`).join('\n');
+}
+
 async function sendChat(){
   const input=document.getElementById('chatInput');
   const text=input.value.trim();if(!text)return;
@@ -423,95 +467,126 @@ async function sendChat(){
 
   const todayStr=dateKey(TODAY);
   const dayName=['Domenica','Lunedì','Martedì','Mercoledì','Giovedì','Venerdì','Sabato'][TODAY.getDay()];
-  const evList=events.length?events.map(e=>`id:${e.id} | ${e.title} | ${e.date} | ${e.startTime}-${e.endTime}${e.groupId?' [ricorrente groupId:'+e.groupId+']':''}`).join('\n'):'(nessun evento)';
 
-  const systemPrompt=`Sei un assistente calendario. Oggi è ${dayName} ${todayStr}.
-Calcola sempre le date esatte YYYY-MM-DD a partire da oggi. La settimana inizia lunedì.
+  const systemPrompt=`Sei un assistente calendario intelligente integrato in un calendario web. Oggi è ${dayName} ${todayStr}. La settimana inizia il lunedì.
 
-EVENTI ATTUALI:
-${evList}
+Puoi fare qualsiasi cosa: aggiungere eventi singoli o ricorrenti, modificarli, eliminarli, rispondere a domande sul calendario, spiegare cosa hai fatto. Parla sempre in italiano, sii conciso e amichevole.
 
-Rispondi SOLO con JSON valido (zero testo extra, zero markdown):
-{
-  "action": "add"|"delete"|"delete_group"|"modify"|"none",
-  "reply": "breve risposta in italiano",
-  "events": [{
-    "id": "(solo per delete/modify)",
-    "groupId": "(solo per delete_group: elimina tutte le occorrenze di un evento ricorrente)",
-    "title": "...",
-    "date": "YYYY-MM-DD",
-    "startTime": "HH:MM",
-    "endTime": "HH:MM",
-    "color": "#3b5bfc",
-    "note": "",
-    "recurrence": {
-      "days": [1,3,5],
-      "weeks": 8
+Per le date relative ("lunedì", "domani", "la prossima settimana") calcola sempre la data YYYY-MM-DD esatta.
+Colori consigliati: lavoro→#3b5bfc, medico/salute→#f03c78, sport→#00b894, studio→#6c5ce7, cibo→#e17055.
+Per ricorrenza: days[] usa numeri JS (0=Dom,1=Lun,2=Mar,3=Mer,4=Gio,5=Ven,6=Sab), weeks=quante settimane (default 8).
+
+Usa get_events per vedere gli eventi prima di eliminarli o modificarli.`;
+
+  const tools = [
+    {
+      name: 'add_event',
+      description: 'Aggiunge un evento al calendario. Supporta eventi singoli e ricorrenti.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          title: {type:'string', description:'Titolo evento'},
+          date: {type:'string', description:'Data YYYY-MM-DD (per eventi singoli o primo giorno)'},
+          startTime: {type:'string', description:'Ora inizio HH:MM'},
+          endTime: {type:'string', description:'Ora fine HH:MM'},
+          color: {type:'string', description:'Colore hex'},
+          note: {type:'string', description:'Note opzionali'},
+          recurrence: {
+            type:'object',
+            description:'Solo per eventi ricorrenti',
+            properties: {
+              days: {type:'array', items:{type:'number'}, description:'Giorni JS: 0=Dom,1=Lun,...,6=Sab'},
+              weeks: {type:'number', description:'Quante settimane (default 8)'}
+            },
+            required:['days']
+          }
+        },
+        required:['title','startTime','endTime']
+      }
+    },
+    {
+      name: 'delete_event',
+      description: 'Elimina un evento o tutti gli eventi di un gruppo ricorrente.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          id: {type:'string', description:'ID evento singolo'},
+          groupId: {type:'string', description:'GroupId per eliminare tutti gli eventi ricorrenti del gruppo'}
+        }
+      }
+    },
+    {
+      name: 'modify_event',
+      description: 'Modifica titolo, orario, colore o note di un evento esistente.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          id: {type:'string', description:'ID evento da modificare'},
+          title: {type:'string'},
+          date: {type:'string'},
+          startTime: {type:'string'},
+          endTime: {type:'string'},
+          color: {type:'string'},
+          note: {type:'string'}
+        },
+        required:['id']
+      }
+    },
+    {
+      name: 'get_events',
+      description: 'Restituisce la lista di tutti gli eventi nel calendario.',
+      input_schema: {type:'object', properties:{}}
     }
-  }]
-}
-
-REGOLE RICORRENZA:
-- Se l'utente dice "ogni lunedì mercoledì venerdì" o simili → usa "recurrence" con days[] usando numeri JS: 0=Dom,1=Lun,2=Mar,3=Mer,4=Gio,5=Ven,6=Sab
-- "weeks" = per quante settimane creare le occorrenze (default 8, max 52)
-- Per eventi NON ricorrenti NON includere "recurrence"
-- Per eliminare TUTTE le occorrenze di un evento ricorrente → action:"delete_group", metti groupId nell'evento
-
-Colori: lavoro→#3b5bfc, medico→#f03c78, sport→#00b894, studio→#6c5ce7, cibo→#e17055, altro→#3b5bfc.
-Per none: events=[].`;
+  ];
 
   try{
-    const res=await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({model:'claude-sonnet-4-5',max_tokens:1000,system:systemPrompt,messages:[{role:'user',content:text}]})
+    // First call
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        model:'claude-sonnet-4-5', max_tokens:1024,
+        system: systemPrompt, tools, messages:[{role:'user',content:text}]
+      })
     });
-    const data=await res.json();
-    const raw=data.content?.map(c=>c.text||'').join('').trim();
-    if(!raw||data.error){addMsg('ai','API error: '+JSON.stringify(data.error||data));removeTyping();document.getElementById('chatSend').disabled=false;return;}
+    let data = await res.json();
+    if(data.error){removeTyping();addMsg('ai','Errore API: '+data.error.message);document.getElementById('chatSend').disabled=false;return;}
 
-    let parsed;
-    try{
-      parsed=JSON.parse(raw.replace(/```json|```/g,'').trim());
-    }catch{
-      removeTyping();
-      addMsg('ai', raw||'Non ho capito, riprova.');
-      document.getElementById('chatSend').disabled=false;
-      document.getElementById('chatInput').focus();
-      return;
+    // Agentic loop — handle tool calls
+    let messages = [{role:'user',content:text}];
+    let finalReply = '';
+    let iterations = 0;
+
+    while(data.stop_reason === 'tool_use' && iterations < 5){
+      iterations++;
+      messages.push({role:'assistant', content:data.content});
+
+      const toolResults = [];
+      for(const block of data.content){
+        if(block.type !== 'tool_use') continue;
+        let result = '';
+        if(block.name==='add_event')    result = toolAddEvent(block.input);
+        else if(block.name==='delete_event') result = toolDeleteEvent(block.input);
+        else if(block.name==='modify_event') result = toolModifyEvent(block.input);
+        else if(block.name==='get_events')   result = toolGetEvents();
+        toolResults.push({type:'tool_result', tool_use_id:block.id, content:result});
+      }
+      messages.push({role:'user', content:toolResults});
+
+      const res2 = await fetch('https://api.anthropic.com/v1/messages', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({model:'claude-sonnet-4-5', max_tokens:1024, system:systemPrompt, tools, messages})
+      });
+      data = await res2.json();
+      if(data.error){break;}
     }
+
+    // Extract final text reply
+    finalReply = (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('').trim();
 
     removeTyping();
+    addMsg('ai', finalReply || 'Fatto!');
 
-    if(parsed.action==='add'&&parsed.events?.length){
-      let firstDate=null;
-      parsed.events.forEach(ev=>{
-        if(ev.recurrence){
-          const instances=expandRecurring(ev, ev.recurrence.days, ev.recurrence.weeks);
-          instances.forEach(i=>events.push(i));
-          if(!firstDate&&instances[0])firstDate=instances[0].date;
-        } else {
-          events.push({id:Date.now().toString()+Math.random().toString(36).slice(2),title:ev.title,date:ev.date,startTime:ev.startTime,endTime:ev.endTime,color:ev.color||'#3b5bfc',note:ev.note||''});
-          if(!firstDate)firstDate=ev.date;
-        }
-      });
-      saveToStorage();
-      if(firstDate){const[y,m,d]=firstDate.split('-').map(Number);cursor=new Date(y,m-1,d);}
-      render();
-    } else if(parsed.action==='delete'&&parsed.events?.length){
-      const ids=parsed.events.map(e=>e.id).filter(Boolean);
-      events=events.filter(e=>!ids.includes(e.id));
-      saveToStorage();render();
-    } else if(parsed.action==='delete_group'&&parsed.events?.length){
-      const gids=parsed.events.map(e=>e.groupId).filter(Boolean);
-      events=events.filter(e=>!gids.includes(e.groupId));
-      saveToStorage();render();
-    } else if(parsed.action==='modify'&&parsed.events?.length){
-      parsed.events.forEach(ev=>{const idx=events.findIndex(e=>e.id===ev.id);if(idx!==-1)events[idx]={...events[idx],...ev};});
-      saveToStorage();render();
-    }
-    addMsg('ai', parsed.reply||'Fatto!');
   }catch(err){
-    clearTimeout(timeout);
     removeTyping();
     addMsg('ai','Errore: '+err.message);
   }
