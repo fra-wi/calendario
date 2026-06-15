@@ -1,0 +1,17 @@
+# Dipendenze
+node_modules/
+**/node_modules/
+
+# Variabili d'ambiente con chiavi segrete — MAI committarle
+.env
+backend/.env
+
+# Dati persistiti a runtime (log previsioni, cache su file)
+backend/data/predictions.json
+
+# Build frontend
+frontend/dist/
+
+# Log e sistema
+*.log
+.DS_Store
