@@ -7,6 +7,7 @@
 import { getTeamId, getRecentFixtures } from "./sources/apiFootball.js";
 import { fetchRecentForm } from "./sources/theSportsDb.js";
 import { getRecentMatches as sofaRecentMatches } from "./sources/sofascore.js";
+import { getInternationalResults } from "./sources/intlResults.js";
 import { getWorldCupMatches } from "./sources/footballData.js";
 import { fetchOdds } from "./sources/oddsApi.js";
 import { toEnglish, toItalian } from "./lib/nameMap.js";
@@ -99,26 +100,39 @@ async function gatherTeamHistory(name, afKey) {
  * @returns {object} { dataset, teamA, teamB }
  */
 async function buildDataset(a, b, keys) {
-  const tasks = [];
-  let fdMatches = [];
+  const ka = teamKey(a), kb = teamKey(b);
+  const all = [];
+  const sources = new Set();
 
-  // partite del torneo (connesse) — in parallelo con la storia per-squadra
+  // SPINA DORSALE: risultati internazionali pubblici (amichevoli, qualificazioni,
+  // Nations League, WC). Filtrati a una "ego-network" attorno ad A e B: tutte le
+  // partite di A/B + le partite tra i loro avversari → dataset ricco ma compatto,
+  // così le forze sono ben ancorate e il modello distingue le squadre.
+  let fdMatches = [];
   const fdTask = keys.footballData
     ? getWorldCupMatches(keys.footballData).then((m) => { fdMatches = m || []; }).catch(() => {})
     : Promise.resolve();
 
-  const [histA, histB] = await Promise.all([
+  const [intl, histA, histB] = await Promise.all([
+    getInternationalResults(36).catch(() => []),
     gatherTeamHistory(a, keys.apiFootball),
     gatherTeamHistory(b, keys.apiFootball),
     fdTask,
   ]);
 
-  // unione di tutte le partite, normalizzate per nome
-  const all = [
-    ...normAll(fdMatches),
-    ...normAll(histA.fixtures),
-    ...normAll(histB.fixtures),
-  ];
+  if (intl.length) {
+    const norm = normAll(intl);
+    const mine = norm.filter((f) => f.homeId === ka || f.awayId === ka || f.homeId === kb || f.awayId === kb);
+    const teams = new Set([ka, kb]);
+    for (const f of mine) { teams.add(f.homeId); teams.add(f.awayId); }
+    const ego = norm.filter((f) => teams.has(f.homeId) && teams.has(f.awayId));
+    if (ego.length) { all.push(...ego); sources.add("risultati internazionali (dataset pubblico)"); }
+  }
+
+  // extra: partite del torneo + storia per-squadra (Sofascore/API-Football/TheSportsDB)
+  if (fdMatches.length) { all.push(...normAll(fdMatches)); sources.add("football-data.org"); }
+  if (histA.fixtures.length) { all.push(...normAll(histA.fixtures)); if (histA.source) sources.add(histA.source); }
+  if (histB.fixtures.length) { all.push(...normAll(histB.fixtures)); if (histB.source) sources.add(histB.source); }
 
   // dedup (stessa data + stesse squadre + stesso punteggio)
   const seen = new Set();
@@ -129,12 +143,7 @@ async function buildDataset(a, b, keys) {
     return true;
   });
 
-  // fonti che hanno contribuito (per i badge)
-  const fdUsed = fdMatches.length > 0;
-  const srcA = [histA.source, fdUsed ? "football-data.org" : null].filter(Boolean).join(" + ") || null;
-  const srcB = [histB.source, fdUsed ? "football-data.org" : null].filter(Boolean).join(" + ") || null;
-
-  const ka = teamKey(a), kb = teamKey(b);
+  const src = [...sources].join(" + ") || null;
   const nameOf = (k, fb) => {
     const m = dataset.find((f) => f.homeId === k || f.awayId === k);
     return m ? (m.homeId === k ? m.homeName : m.awayName) : fb;
@@ -142,8 +151,8 @@ async function buildDataset(a, b, keys) {
 
   return {
     dataset,
-    teamA: { id: ka, name: nameOf(ka, toEnglish(a)), source: srcA },
-    teamB: { id: kb, name: nameOf(kb, toEnglish(b)), source: srcB },
+    teamA: { id: ka, name: nameOf(ka, toEnglish(a)), source: src },
+    teamB: { id: kb, name: nameOf(kb, toEnglish(b)), source: src },
   };
 }
 

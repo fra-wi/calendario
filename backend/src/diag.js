@@ -10,6 +10,7 @@ import {
 } from "./sources/apiFootball.js";
 import { fetchRecentForm } from "./sources/theSportsDb.js";
 import { getRecentMatches as sofaRecentMatches } from "./sources/sofascore.js";
+import { getInternationalResults } from "./sources/intlResults.js";
 import { getWorldCupMatches } from "./sources/footballData.js";
 import { fetchFixtures } from "./sources/espn.js";
 
@@ -79,6 +80,13 @@ export async function runDiagnostics(keys, a = "Francia", b = "Senegal") {
       };
     }),
 
+    // 0) Risultati internazionali pubblici — la spina dorsale del motore
+    probe("Risultati internazionali (dataset pubblico)", async () => {
+      const all = await getInternationalResults(36);
+      const has = (name) => all.filter((m) => m.homeName.toLowerCase() === name.toLowerCase() || m.awayName.toLowerCase() === name.toLowerCase()).length;
+      return { partiteTotali: all.length, [`partite_${enA}`]: has(enA), [`partite_${enB}`]: has(enB) };
+    }),
+
     // 3b) Sofascore — storia ampia per-squadra (la fonte più ricca)
     probe(`Sofascore (${enA})`, async () => {
       const r = await sofaRecentMatches(enA);
@@ -113,31 +121,27 @@ export async function runDiagnostics(keys, a = "Francia", b = "Senegal") {
   const fd = probes.find((p) => p.name === "football-data.org Mondiale");
   const sofaA = probes.find((p) => p.name.startsWith("Sofascore") && p.name.includes(enA));
   const sofaB = probes.find((p) => p.name.startsWith("Sofascore") && p.name.includes(enB));
-  // Il motore UNISCE tutte le fonti (torneo + storia ampia per-squadra): somma approssimata
+  const intl = probes.find((p) => p.name.startsWith("Risultati internazionali"));
+  // Spina dorsale = risultati internazionali; le altre fonti aggiungono extra.
+  const intlA = intl?.ok ? (intl[`partite_${enA}`] || 0) : 0;
+  const intlB = intl?.ok ? (intl[`partite_${enB}`] || 0) : 0;
   const fdN = fd?.ok ? fd.partiteConcluse : 0;
-  const afN = af?.risultatiRecenti || 0;
-  const tsA = tsdbA?.partite || 0;
-  const tsB = tsdbB?.partite || 0;
-  const sfA = sofaA?.partite || 0;
-  const sfB = sofaB?.partite || 0;
-  // priorità per la storia per-squadra: Sofascore > API-Football > TheSportsDB
-  const histA = sfA >= 3 ? sfA : afN >= 3 ? afN : tsA;
-  const histB = sfB >= 3 ? sfB : afN >= 3 ? afN : tsB;
-  const partiteStimate = fdN + histA + histB;
+  const sfA = sofaA?.partite || 0, sfB = sofaB?.partite || 0;
 
   return {
     testMatch: `${enA} vs ${enB}`,
     probes,
     sintesi: {
       quoteOk: probes.find((p) => p.name === "The Odds API")?.eventiNelFeed > 0,
-      apiFootballPiano: probes.find((p) => p.name === "API-Football /status")?.plan || "n/d",
+      risultatiInternazionali: { totali: intl?.ok ? intl.partiteTotali : 0, [enA]: intlA, [enB]: intlB },
       footballDataPartite: fdN,
       sofascorePartite: { [enA]: sfA, [enB]: sfB },
-      datasetUsatoDalMotore: partiteStimate,
       verdetto:
-        partiteStimate >= 6
-          ? "Dati storici sufficienti per il motore."
-          : "Dati storici INSUFFICIENTI. Se anche Sofascore dà 0, è bloccato dalla rete (Cloudflare): in quel caso serve un'altra fonte.",
+        intlA >= 5 && intlB >= 5
+          ? "Dati storici OK: il motore ha abbastanza partite per stimare le forze."
+          : intl?.ok
+            ? "Poche partite per una delle due squadre: stime prudenti (la regolarizzazione le tiene a freno)."
+            : "Risultati internazionali NON raggiungibili dalla rete: il motore resta a secco. Dimmelo e cambiamo fonte.",
     },
   };
 }
