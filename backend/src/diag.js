@@ -100,11 +100,14 @@ export async function runDiagnostics(keys, a = "Francia", b = "Senegal") {
   const tsdbA = probes.find((p) => p.name.startsWith("TheSportsDB") && p.name.includes(enA));
   const tsdbB = probes.find((p) => p.name.startsWith("TheSportsDB") && p.name.includes(enB));
   const fd = probes.find((p) => p.name === "football-data.org Mondiale");
-  const histA = (af?.risultatiRecenti || 0) || (tsdbA?.partite || 0);
-  const histB = (af?.risultatiRecenti || 0) ? af.risultatiRecenti : (tsdbB?.partite || 0);
-  // football-data dà un dataset connesso: se contiene entrambe le squadre, è quello che usa il motore
-  const fdUsabile = fd?.ok && fd.contiene_A && fd.contiene_B ? fd.partiteConcluse : 0;
-  const partiteStimate = fdUsabile || (histA + histB);
+  // Il motore UNISCE tutte le fonti (torneo + storia ampia per-squadra): somma approssimata
+  const fdN = fd?.ok ? fd.partiteConcluse : 0;
+  const afN = af?.risultatiRecenti || 0;
+  const tsA = tsdbA?.partite || 0;
+  const tsB = tsdbB?.partite || 0;
+  // se API-Football funziona dà la storia ampia, altrimenti TheSportsDB
+  const histTot = afN >= 3 ? afN * 2 : tsA + tsB;
+  const partiteStimate = fdN + histTot;
 
   return {
     testMatch: `${enA} vs ${enB}`,

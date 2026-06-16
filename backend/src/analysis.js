@@ -14,19 +14,24 @@ import { deriveMarkets } from "./engine/markets.js";
 import { evaluateAll } from "./engine/value.js";
 import { logPrediction } from "./engine/calibration.js";
 
-// Per il fallback TheSportsDB usiamo il nome squadra come id stabile.
-function nameId(name) {
-  return "n:" + (name || "").trim().toLowerCase();
+// ID squadra UNIFICATO tra le fonti: nome inglese normalizzato (senza accenti).
+// Così la stessa nazionale resta UNA sola anche mescolando football-data,
+// TheSportsDB e API-Football → il motore stima in modo coerente.
+function teamKey(name) {
+  return toEnglish(name).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim();
 }
 
-/** Normalizza una lista di partite per il motore (id numerici o nomi). */
-function normalizeFixtures(list) {
+/** Normalizza partite da QUALSIASI fonte usando il nome come chiave. */
+function normAll(list) {
   const out = [];
   for (const f of list || []) {
-    if (f.gh == null || f.ga == null) continue;
-    const homeId = f.homeId != null ? f.homeId : nameId(f.homeName);
-    const awayId = f.awayId != null ? f.awayId : nameId(f.awayName);
-    out.push({ homeId, awayId, gh: f.gh, ga: f.ga, date: f.date || f.isoDate, homeName: f.homeName, awayName: f.awayName });
+    if (f.gh == null || f.ga == null || !f.homeName || !f.awayName) continue;
+    out.push({
+      date: f.date || f.isoDate,
+      homeName: f.homeName, awayName: f.awayName,
+      homeId: teamKey(f.homeName), awayId: teamKey(f.awayName),
+      gh: f.gh, ga: f.ga,
+    });
   }
   return out;
 }
@@ -57,81 +62,83 @@ function computeForm(fixtures, teamId, teamName) {
  * Raccoglie i risultati storici di una squadra: prima API-Football,
  * poi TheSportsDB come fallback. Ritorna { id, name, source, fixtures }.
  */
-async function gatherTeam(name, afKey) {
+/**
+ * Storia AMPIA per-squadra (amichevoli, qualificazioni, Nations League, WC…):
+ * le ultime ~N partite della nazionale across TUTTE le competizioni.
+ * @returns {object} { source, fixtures }
+ */
+async function gatherTeamHistory(name, afKey) {
   const en = toEnglish(name);
-  // 1) API-Football
+  // 1) API-Football (se il piano copre le stagioni recenti)
   if (afKey) {
     try {
       const team = await getTeamId(en, afKey);
       const fixtures = await getRecentFixtures(team.id, afKey, 40);
-      if (fixtures.length >= 3) {
-        return { id: team.id, name: team.name, source: "API-Football", fixtures };
-      }
-    } catch {
-      // continua col fallback
-    }
+      if (fixtures.length >= 3) return { source: "API-Football", fixtures };
+    } catch { /* fallback */ }
   }
-  // 2) TheSportsDB
+  // 2) TheSportsDB (ultime partite di tutte le competizioni: amichevoli/qualificazioni)
   try {
     const tsdb = await fetchRecentForm(en);
-    if (tsdb && tsdb.fixtures?.length) {
-      return { id: nameId(en), name: en, source: "TheSportsDB", fixtures: tsdb.fixtures };
-    }
-  } catch {}
-  return { id: nameId(en), name: en, source: null, fixtures: [] };
-}
-
-/** Cerca una squadra (per nome) dentro un dataset football-data. */
-function resolveInDataset(matches, name) {
-  const en = toEnglish(name).toLowerCase();
-  for (const m of matches) {
-    if ((m.homeName || "").toLowerCase().includes(en) || en.includes((m.homeName || "").toLowerCase()))
-      return { id: m.homeId, name: m.homeName };
-    if ((m.awayName || "").toLowerCase().includes(en) || en.includes((m.awayName || "").toLowerCase()))
-      return { id: m.awayId, name: m.awayName };
-  }
-  return null;
+    if (tsdb && tsdb.fixtures?.length) return { source: "TheSportsDB", fixtures: tsdb.fixtures };
+  } catch { /* niente */ }
+  return { source: null, fixtures: [] };
 }
 
 /**
- * Costruisce il dataset storico per A vs B.
- * 1) football-data.org (tutte le partite del Mondiale in una richiesta: dataset
- *    connesso, ideale per la stima congiunta) — se entrambe le squadre ci sono;
- * 2) altrimenti per-squadra: API-Football → TheSportsDB.
+ * Costruisce il dataset storico per A vs B UNENDO tutte le fonti disponibili:
+ *  - football-data.org → partite del Mondiale (dataset "connesso");
+ *  - per-squadra → storia ampia (amichevoli, qualificazioni…) da API-Football/TheSportsDB.
+ * Tutto identificato per NOME, così il motore vede una sola entità per nazionale.
  * @returns {object} { dataset, teamA, teamB }
  */
 async function buildDataset(a, b, keys) {
-  // 1) football-data.org (preferita)
-  if (keys.footballData) {
-    try {
-      const wc = await getWorldCupMatches(keys.footballData);
-      const ra = resolveInDataset(wc, a);
-      const rb = resolveInDataset(wc, b);
-      if (ra && rb && wc.length >= 3) {
-        return {
-          dataset: wc,
-          teamA: { id: ra.id, name: ra.name, source: "football-data.org" },
-          teamB: { id: rb.id, name: rb.name, source: "football-data.org" },
-        };
-      }
-    } catch {
-      // fallback sotto
-    }
-  }
-  // 2) per-squadra (API-Football → TheSportsDB)
-  const [teamA, teamB] = await Promise.all([
-    gatherTeam(a, keys.apiFootball),
-    gatherTeam(b, keys.apiFootball),
+  const tasks = [];
+  let fdMatches = [];
+
+  // partite del torneo (connesse) — in parallelo con la storia per-squadra
+  const fdTask = keys.footballData
+    ? getWorldCupMatches(keys.footballData).then((m) => { fdMatches = m || []; }).catch(() => {})
+    : Promise.resolve();
+
+  const [histA, histB] = await Promise.all([
+    gatherTeamHistory(a, keys.apiFootball),
+    gatherTeamHistory(b, keys.apiFootball),
+    fdTask,
   ]);
-  const merged = [...normalizeFixtures(teamA.fixtures), ...normalizeFixtures(teamB.fixtures)];
+
+  // unione di tutte le partite, normalizzate per nome
+  const all = [
+    ...normAll(fdMatches),
+    ...normAll(histA.fixtures),
+    ...normAll(histB.fixtures),
+  ];
+
+  // dedup (stessa data + stesse squadre + stesso punteggio)
   const seen = new Set();
-  const dataset = merged.filter((f) => {
-    const k = `${f.date}|${f.homeId}|${f.awayId}`;
+  const dataset = all.filter((f) => {
+    const k = `${(f.date || "").slice(0, 10)}|${f.homeId}|${f.awayId}|${f.gh}-${f.ga}`;
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
   });
-  return { dataset, teamA, teamB };
+
+  // fonti che hanno contribuito (per i badge)
+  const fdUsed = fdMatches.length > 0;
+  const srcA = [histA.source, fdUsed ? "football-data.org" : null].filter(Boolean).join(" + ") || null;
+  const srcB = [histB.source, fdUsed ? "football-data.org" : null].filter(Boolean).join(" + ") || null;
+
+  const ka = teamKey(a), kb = teamKey(b);
+  const nameOf = (k, fb) => {
+    const m = dataset.find((f) => f.homeId === k || f.awayId === k);
+    return m ? (m.homeId === k ? m.homeName : m.awayName) : fb;
+  };
+
+  return {
+    dataset,
+    teamA: { id: ka, name: nameOf(ka, toEnglish(a)), source: srcA },
+    teamB: { id: kb, name: nameOf(kb, toEnglish(b)), source: srcB },
+  };
 }
 
 /**
