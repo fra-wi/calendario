@@ -9,6 +9,7 @@ import {
   getStatus, getTeamId, getRecentFixtures, getWorldCupLeagueId,
 } from "./sources/apiFootball.js";
 import { fetchRecentForm } from "./sources/theSportsDb.js";
+import { getRecentMatches as sofaRecentMatches } from "./sources/sofascore.js";
 import { getWorldCupMatches } from "./sources/footballData.js";
 import { fetchFixtures } from "./sources/espn.js";
 
@@ -78,6 +79,16 @@ export async function runDiagnostics(keys, a = "Francia", b = "Senegal") {
       };
     }),
 
+    // 3b) Sofascore — storia ampia per-squadra (la fonte più ricca)
+    probe(`Sofascore (${enA})`, async () => {
+      const r = await sofaRecentMatches(enA);
+      return { teamId: r.teamId, partite: r.fixtures.length, ultimo: r.fixtures[0] ? `${r.fixtures[0].homeName} ${r.fixtures[0].gh}-${r.fixtures[0].ga} ${r.fixtures[0].awayName}` : null };
+    }),
+    probe(`Sofascore (${enB})`, async () => {
+      const r = await sofaRecentMatches(enB);
+      return { teamId: r.teamId, partite: r.fixtures.length, ultimo: r.fixtures[0] ? `${r.fixtures[0].homeName} ${r.fixtures[0].gh}-${r.fixtures[0].ga} ${r.fixtures[0].awayName}` : null };
+    }),
+
     // 4) TheSportsDB — quante partite storiche per le due squadre
     probe(`TheSportsDB (${enA})`, async () => {
       const f = await fetchRecentForm(enA);
@@ -100,14 +111,19 @@ export async function runDiagnostics(keys, a = "Francia", b = "Senegal") {
   const tsdbA = probes.find((p) => p.name.startsWith("TheSportsDB") && p.name.includes(enA));
   const tsdbB = probes.find((p) => p.name.startsWith("TheSportsDB") && p.name.includes(enB));
   const fd = probes.find((p) => p.name === "football-data.org Mondiale");
+  const sofaA = probes.find((p) => p.name.startsWith("Sofascore") && p.name.includes(enA));
+  const sofaB = probes.find((p) => p.name.startsWith("Sofascore") && p.name.includes(enB));
   // Il motore UNISCE tutte le fonti (torneo + storia ampia per-squadra): somma approssimata
   const fdN = fd?.ok ? fd.partiteConcluse : 0;
   const afN = af?.risultatiRecenti || 0;
   const tsA = tsdbA?.partite || 0;
   const tsB = tsdbB?.partite || 0;
-  // se API-Football funziona dà la storia ampia, altrimenti TheSportsDB
-  const histTot = afN >= 3 ? afN * 2 : tsA + tsB;
-  const partiteStimate = fdN + histTot;
+  const sfA = sofaA?.partite || 0;
+  const sfB = sofaB?.partite || 0;
+  // priorità per la storia per-squadra: Sofascore > API-Football > TheSportsDB
+  const histA = sfA >= 3 ? sfA : afN >= 3 ? afN : tsA;
+  const histB = sfB >= 3 ? sfB : afN >= 3 ? afN : tsB;
+  const partiteStimate = fdN + histA + histB;
 
   return {
     testMatch: `${enA} vs ${enB}`,
@@ -115,12 +131,13 @@ export async function runDiagnostics(keys, a = "Francia", b = "Senegal") {
     sintesi: {
       quoteOk: probes.find((p) => p.name === "The Odds API")?.eventiNelFeed > 0,
       apiFootballPiano: probes.find((p) => p.name === "API-Football /status")?.plan || "n/d",
-      footballDataPartite: fd?.ok ? fd.partiteConcluse : 0,
+      footballDataPartite: fdN,
+      sofascorePartite: { [enA]: sfA, [enB]: sfB },
       datasetUsatoDalMotore: partiteStimate,
       verdetto:
         partiteStimate >= 6
           ? "Dati storici sufficienti per il motore."
-          : "Dati storici INSUFFICIENTI: il motore non può stimare le forze. Aggiungi FOOTBALL_DATA_KEY (gratis) o un piano dati con la stagione 2026.",
+          : "Dati storici INSUFFICIENTI. Se anche Sofascore dà 0, è bloccato dalla rete (Cloudflare): in quel caso serve un'altra fonte.",
     },
   };
 }

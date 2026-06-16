@@ -6,6 +6,7 @@
 
 import { getTeamId, getRecentFixtures } from "./sources/apiFootball.js";
 import { fetchRecentForm } from "./sources/theSportsDb.js";
+import { getRecentMatches as sofaRecentMatches } from "./sources/sofascore.js";
 import { getWorldCupMatches } from "./sources/footballData.js";
 import { fetchOdds } from "./sources/oddsApi.js";
 import { toEnglish, toItalian } from "./lib/nameMap.js";
@@ -69,7 +70,12 @@ function computeForm(fixtures, teamId, teamName) {
  */
 async function gatherTeamHistory(name, afKey) {
   const en = toEnglish(name);
-  // 1) API-Football (se il piano copre le stagioni recenti)
+  // 1) Sofascore (la fonte più ricca: ~30-60 partite di tutte le competizioni)
+  try {
+    const sofa = await sofaRecentMatches(en);
+    if (sofa && sofa.fixtures?.length >= 3) return { source: "Sofascore", fixtures: sofa.fixtures };
+  } catch { /* fallback */ }
+  // 2) API-Football (se il piano copre le stagioni recenti)
   if (afKey) {
     try {
       const team = await getTeamId(en, afKey);
@@ -77,7 +83,7 @@ async function gatherTeamHistory(name, afKey) {
       if (fixtures.length >= 3) return { source: "API-Football", fixtures };
     } catch { /* fallback */ }
   }
-  // 2) TheSportsDB (ultime partite di tutte le competizioni: amichevoli/qualificazioni)
+  // 3) TheSportsDB (ultime partite di tutte le competizioni: amichevoli/qualificazioni)
   try {
     const tsdb = await fetchRecentForm(en);
     if (tsdb && tsdb.fixtures?.length) return { source: "TheSportsDB", fixtures: tsdb.fixtures };
