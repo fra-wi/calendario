@@ -6,6 +6,7 @@
 
 import { getTeamId, getRecentFixtures } from "./sources/apiFootball.js";
 import { fetchRecentForm } from "./sources/theSportsDb.js";
+import { getWorldCupMatches } from "./sources/footballData.js";
 import { fetchOdds } from "./sources/oddsApi.js";
 import { toEnglish, toItalian } from "./lib/nameMap.js";
 import { fitDixonColes, expectedGoals, scoreMatrix } from "./engine/dixonColes.js";
@@ -80,6 +81,59 @@ async function gatherTeam(name, afKey) {
   return { id: nameId(en), name: en, source: null, fixtures: [] };
 }
 
+/** Cerca una squadra (per nome) dentro un dataset football-data. */
+function resolveInDataset(matches, name) {
+  const en = toEnglish(name).toLowerCase();
+  for (const m of matches) {
+    if ((m.homeName || "").toLowerCase().includes(en) || en.includes((m.homeName || "").toLowerCase()))
+      return { id: m.homeId, name: m.homeName };
+    if ((m.awayName || "").toLowerCase().includes(en) || en.includes((m.awayName || "").toLowerCase()))
+      return { id: m.awayId, name: m.awayName };
+  }
+  return null;
+}
+
+/**
+ * Costruisce il dataset storico per A vs B.
+ * 1) football-data.org (tutte le partite del Mondiale in una richiesta: dataset
+ *    connesso, ideale per la stima congiunta) — se entrambe le squadre ci sono;
+ * 2) altrimenti per-squadra: API-Football → TheSportsDB.
+ * @returns {object} { dataset, teamA, teamB }
+ */
+async function buildDataset(a, b, keys) {
+  // 1) football-data.org (preferita)
+  if (keys.footballData) {
+    try {
+      const wc = await getWorldCupMatches(keys.footballData);
+      const ra = resolveInDataset(wc, a);
+      const rb = resolveInDataset(wc, b);
+      if (ra && rb && wc.length >= 3) {
+        return {
+          dataset: wc,
+          teamA: { id: ra.id, name: ra.name, source: "football-data.org" },
+          teamB: { id: rb.id, name: rb.name, source: "football-data.org" },
+        };
+      }
+    } catch {
+      // fallback sotto
+    }
+  }
+  // 2) per-squadra (API-Football → TheSportsDB)
+  const [teamA, teamB] = await Promise.all([
+    gatherTeam(a, keys.apiFootball),
+    gatherTeam(b, keys.apiFootball),
+  ]);
+  const merged = [...normalizeFixtures(teamA.fixtures), ...normalizeFixtures(teamB.fixtures)];
+  const seen = new Set();
+  const dataset = merged.filter((f) => {
+    const k = `${f.date}|${f.homeId}|${f.awayId}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  return { dataset, teamA, teamB };
+}
+
 /**
  * Analisi completa di una partita a vs b.
  * @param {string} a, b - nomi (italiano o inglese)
@@ -90,22 +144,11 @@ export async function analyzeMatch(a, b, keys = {}, opts = {}) {
   const neutral = opts.neutral !== false;
   const labelA = toItalian(a), labelB = toItalian(b);
 
-  // 1) Risultati storici di entrambe (in parallelo) + quote reali
-  const [teamA, teamB, odds] = await Promise.all([
-    gatherTeam(a, keys.apiFootball),
-    gatherTeam(b, keys.apiFootball),
+  // 1) Dataset storico (football-data.org → API-Football → TheSportsDB) + quote reali
+  const [{ dataset, teamA, teamB }, odds] = await Promise.all([
+    buildDataset(a, b, keys),
     keys.odds ? fetchOdds(a, b, keys.odds).catch((e) => ({ found: false, source: "The Odds API", reason: e.message })) : Promise.resolve(null),
   ]);
-
-  // 2) Dataset comune per il motore (unione, deduplicata per data+squadre)
-  const merged = [...normalizeFixtures(teamA.fixtures), ...normalizeFixtures(teamB.fixtures)];
-  const seen = new Set();
-  const dataset = merged.filter((f) => {
-    const k = `${f.date}|${f.homeId}|${f.awayId}`;
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
 
   // 3) Stima Dixon-Coles
   const model = fitDixonColes(dataset, { refDate: new Date() });

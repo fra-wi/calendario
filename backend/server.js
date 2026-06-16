@@ -14,6 +14,7 @@ import {
   getRateRemaining,
 } from "./src/sources/apiFootball.js";
 import { fetchOdds } from "./src/sources/oddsApi.js";
+import { getWorldCupStandings } from "./src/sources/footballData.js";
 import { buildProps, votePropWithOdds } from "./src/engine/props.js";
 import {
   calibration, settlePrediction, addPlay, settlePlay, ledger,
@@ -30,6 +31,7 @@ app.use(express.json());
 const KEYS = {
   odds: process.env.ODDS_API_KEY || "",
   apiFootball: process.env.API_FOOTBALL_KEY || "",
+  footballData: process.env.FOOTBALL_DATA_KEY || "",
 };
 
 // Helper: wrappa un handler async e gira gli errori in JSON (mai crash)
@@ -48,6 +50,7 @@ app.get("/api/health", (req, res) => {
     keys: {
       odds: !!KEYS.odds,
       apiFootball: !!KEYS.apiFootball,
+      footballData: !!KEYS.footballData,
       anthropic: llmAvailable(),
     },
     apiFootballRateRemaining: getRateRemaining(),
@@ -114,29 +117,44 @@ app.post("/api/props/vote", h(async (req, res) => {
 app.get("/api/context", h(async (req, res) => {
   const { a, b } = req.query;
   if (!a || !b) return res.status(400).json({ error: "parametri 'a' e 'b' richiesti" });
-  if (!KEYS.apiFootball) return res.json({ source: null, note: "API_FOOTBALL_KEY non configurata" });
 
-  const [ta, tb] = await Promise.all([
-    getTeamId(a, KEYS.apiFootball),
-    getTeamId(b, KEYS.apiFootball),
-  ]);
-  const [injA, injB, standings, h2h] = await Promise.all([
-    getInjuries(ta.id, KEYS.apiFootball).catch(() => []),
-    getInjuries(tb.id, KEYS.apiFootball).catch(() => []),
-    getStandings(ta.id, KEYS.apiFootball).catch(() => null),
-    getH2HFixtures(ta.id, tb.id, KEYS.apiFootball).catch(() => []),
-  ]);
+  let injuries = { a: [], b: [] }, h2h = [], standings = null, lineups = null;
+  const usedSources = [];
 
-  // Prova a recuperare le formazioni dalla prossima partita tra le due
-  let lineups = null;
-  const upcoming = (h2h || []).find((f) => f.status === "NS" || f.status === "TBD");
-  if (upcoming?.id) {
-    lineups = await getLineups(upcoming.id, KEYS.apiFootball).catch(() => null);
+  // API-Football: infortuni, H2H, formazioni, classifiche (se la chiave c'è)
+  if (KEYS.apiFootball) {
+    try {
+      const [ta, tb] = await Promise.all([
+        getTeamId(a, KEYS.apiFootball),
+        getTeamId(b, KEYS.apiFootball),
+      ]);
+      const [injA, injB, st, hh] = await Promise.all([
+        getInjuries(ta.id, KEYS.apiFootball).catch(() => []),
+        getInjuries(tb.id, KEYS.apiFootball).catch(() => []),
+        getStandings(ta.id, KEYS.apiFootball).catch(() => null),
+        getH2HFixtures(ta.id, tb.id, KEYS.apiFootball).catch(() => []),
+      ]);
+      injuries = { a: injA, b: injB };
+      h2h = hh;
+      standings = st;
+      const upcoming = (hh || []).find((f) => f.status === "NS" || f.status === "TBD");
+      if (upcoming?.id) lineups = await getLineups(upcoming.id, KEYS.apiFootball).catch(() => null);
+      usedSources.push("API-Football");
+    } catch {
+      // se API-Football è giù si prosegue con football-data per le classifiche
+    }
+  }
+
+  // football-data.org: classifica girone (fallback o fonte unica)
+  if (!standings && KEYS.footballData) {
+    standings = await getWorldCupStandings(KEYS.footballData, a).catch(() => null);
+    if (standings) usedSources.push("football-data.org");
   }
 
   res.json({
-    source: "API-Football",
-    injuries: { a: injA, b: injB },
+    source: usedSources.join(" + ") || null,
+    note: usedSources.length ? undefined : "Nessuna fonte contesto configurata (serve API_FOOTBALL_KEY o FOOTBALL_DATA_KEY)",
+    injuries,
     standings,
     h2h,
     lineups,

@@ -85,6 +85,7 @@ export default function App() {
         {health && (
           <div style={{ marginBottom: 14, fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: T.chalkDim, letterSpacing: "0.05em" }}>
             FONTI: <span style={{ color: health.keys.odds ? T.win : T.draw }}>The Odds API {health.keys.odds ? "✓" : "—"}</span>
+            {" · "}<span style={{ color: health.keys.footballData ? T.win : T.draw }}>football-data {health.keys.footballData ? "✓" : "—"}</span>
             {" · "}<span style={{ color: health.keys.apiFootball ? T.win : T.draw }}>API-Football {health.keys.apiFootball ? "✓" : "—"}</span>
             {" · "}<span style={{ color: health.keys.anthropic ? T.win : T.chalkDim }}>note LLM {health.keys.anthropic ? "✓" : "off"}</span>
             {health.apiFootballRateRemaining != null && <span style={{ color: T.chalkDim }}> · richieste API-Football rimaste: {health.apiFootballRateRemaining}</span>}

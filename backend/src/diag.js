@@ -9,6 +9,7 @@ import {
   getStatus, getTeamId, getRecentFixtures, getWorldCupLeagueId,
 } from "./sources/apiFootball.js";
 import { fetchRecentForm } from "./sources/theSportsDb.js";
+import { getWorldCupMatches } from "./sources/footballData.js";
 import { fetchFixtures } from "./sources/espn.js";
 
 const probe = async (name, fn) => {
@@ -64,7 +65,20 @@ export async function runDiagnostics(keys, a = "Francia", b = "Senegal") {
       return { leagueId: id, season: 2026 };
     }),
 
-    // 3) TheSportsDB — quante partite storiche per le due squadre
+    // 3) football-data.org — partite Mondiali concluse (dataset per il motore)
+    probe("football-data.org Mondiale", async () => {
+      if (!keys.footballData) return { skipped: "FOOTBALL_DATA_KEY mancante" };
+      const wc = await getWorldCupMatches(keys.footballData);
+      const present = (name) => wc.some((m) => (m.homeName + " " + m.awayName).toLowerCase().includes(name.toLowerCase()));
+      return {
+        partiteConcluse: wc.length,
+        contiene_A: present(enA),
+        contiene_B: present(enB),
+        esempi: wc.slice(0, 3).map((m) => `${m.homeName} ${m.gh}-${m.ga} ${m.awayName}`),
+      };
+    }),
+
+    // 4) TheSportsDB — quante partite storiche per le due squadre
     probe(`TheSportsDB (${enA})`, async () => {
       const f = await fetchRecentForm(enA);
       return f ? { partite: f.nMatches, gfAvg: f.gfAvg, gsAvg: f.gsAvg } : { partite: 0, nota: "nessun dato" };
@@ -85,8 +99,12 @@ export async function runDiagnostics(keys, a = "Francia", b = "Senegal") {
   const af = probes.find((p) => p.name.startsWith("API-Football team"));
   const tsdbA = probes.find((p) => p.name.startsWith("TheSportsDB") && p.name.includes(enA));
   const tsdbB = probes.find((p) => p.name.startsWith("TheSportsDB") && p.name.includes(enB));
+  const fd = probes.find((p) => p.name === "football-data.org Mondiale");
   const histA = (af?.risultatiRecenti || 0) || (tsdbA?.partite || 0);
   const histB = (af?.risultatiRecenti || 0) ? af.risultatiRecenti : (tsdbB?.partite || 0);
+  // football-data dà un dataset connesso: se contiene entrambe le squadre, è quello che usa il motore
+  const fdUsabile = fd?.ok && fd.contiene_A && fd.contiene_B ? fd.partiteConcluse : 0;
+  const partiteStimate = fdUsabile || (histA + histB);
 
   return {
     testMatch: `${enA} vs ${enB}`,
@@ -94,11 +112,12 @@ export async function runDiagnostics(keys, a = "Francia", b = "Senegal") {
     sintesi: {
       quoteOk: probes.find((p) => p.name === "The Odds API")?.eventiNelFeed > 0,
       apiFootballPiano: probes.find((p) => p.name === "API-Football /status")?.plan || "n/d",
-      partiteStoricheStimate: histA + histB,
+      footballDataPartite: fd?.ok ? fd.partiteConcluse : 0,
+      datasetUsatoDalMotore: partiteStimate,
       verdetto:
-        (histA + histB) >= 6
+        partiteStimate >= 6
           ? "Dati storici sufficienti per il motore."
-          : "Dati storici INSUFFICIENTI: il motore non può stimare le forze. Vedi i dettagli delle fonti sopra.",
+          : "Dati storici INSUFFICIENTI: il motore non può stimare le forze. Aggiungi FOOTBALL_DATA_KEY (gratis) o un piano dati con la stagione 2026.",
     },
   };
 }
