@@ -245,7 +245,14 @@ export async function analyzeMatch(a, b, keys = {}, opts = {}) {
   }
 
   // 4) Gol attesi + matrice + mercati
-  const eg = expectedGoals(model, teamA.id, teamB.id, { neutral });
+  // Nazioni ospitanti 2026: giocano "in casa" anche su campo formalmente neutro.
+  const HOSTS = new Set(["united states", "usa", "mexico", "canada"]);
+  const hostA = HOSTS.has(teamA.id), hostB = HOSTS.has(teamB.id);
+  const eg = expectedGoals(model, teamA.id, teamB.id, {
+    neutral,
+    homeFactorA: neutral ? (hostA ? 0.5 : 0) : undefined,
+    homeFactorB: neutral ? (hostB ? 0.5 : 0) : undefined,
+  });
   if (!eg) {
     result.engine = { ok: false, reason: "una delle due squadre non è nel dataset storico" };
     result.markets = [];
@@ -264,6 +271,7 @@ export async function analyzeMatch(a, b, keys = {}, opts = {}) {
     rho: model.rho,
     gamma: model.gamma,
     neutral,
+    hostAdvantage: hostA ? labelA : hostB ? labelB : null,
     strengthA: model.teams[teamA.id],
     strengthB: model.teams[teamB.id],
     fit: model.fit,

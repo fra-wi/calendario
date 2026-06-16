@@ -244,7 +244,7 @@ export function MarketsCard({ data, loading, onAdd, isAdded, matchLabel }) {
               {data.engine.lambda} <span style={{ color: T.signal }}>—</span> {data.engine.mu}
             </div>
             <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: T.chalkDim, marginTop: 2 }}>
-              λ/μ Dixon-Coles{data.engine.neutral ? " · campo neutro" : ""} · ρ={data.engine.rho}
+              λ/μ Dixon-Coles{data.engine.hostAdvantage ? ` · vantaggio casa: ${data.engine.hostAdvantage}` : data.engine.neutral ? " · campo neutro" : ""} · ρ={data.engine.rho}
             </div>
             <Label>Risultati esatti più probabili</Label>
             {(data.exact || []).slice(0, 5).map((e, i) => (

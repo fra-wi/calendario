@@ -9,7 +9,7 @@ import {
   getStatus, getTeamId, getRecentFixtures, getWorldCupLeagueId,
 } from "./sources/apiFootball.js";
 import { fetchRecentForm } from "./sources/theSportsDb.js";
-import { getRecentMatches as sofaRecentMatches } from "./sources/sofascore.js";
+import { getRecentMatches as sofaRecentMatches, sampleStatKeys, getKeyPlayersStats } from "./sources/sofascore.js";
 import { getInternationalResults } from "./sources/intlResults.js";
 import { getWorldCupMatches } from "./sources/footballData.js";
 import { fetchFixtures } from "./sources/espn.js";
@@ -95,6 +95,17 @@ export async function runDiagnostics(keys, a = "Francia", b = "Senegal") {
     probe(`Sofascore (${enB})`, async () => {
       const r = await sofaRecentMatches(enB);
       return { teamId: r.teamId, partite: r.fixtures.length, ultimo: r.fixtures[0] ? `${r.fixtures[0].homeName} ${r.fixtures[0].gh}-${r.fixtures[0].ga} ${r.fixtures[0].awayName}` : null };
+    }),
+
+    // 3c) Sofascore giocatori — verifica props + nomi campi statistici (per tarare)
+    probe(`Sofascore giocatori (${enA})`, async () => {
+      const ks = await sampleStatKeys(enA).catch(() => ({ keys: [] }));
+      const st = await getKeyPlayersStats(enA, 2);
+      return {
+        giocatoriConStat: st.players.length,
+        esempio: st.players[0] ? `${st.players[0].name}: ${st.players[0].shotsTotal} tiri / ${st.players[0].appearances} gare` : null,
+        campiStatGrezzi: ks.keys, // mi serve per mappare i nomi esatti
+      };
     }),
 
     // 4) TheSportsDB — quante partite storiche per le due squadre

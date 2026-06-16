@@ -15,6 +15,7 @@ import {
 } from "./src/sources/apiFootball.js";
 import { fetchOdds } from "./src/sources/oddsApi.js";
 import { getWorldCupStandings } from "./src/sources/footballData.js";
+import { getKeyPlayersStats } from "./src/sources/sofascore.js";
 import { buildProps, votePropWithOdds } from "./src/engine/props.js";
 import {
   calibration, settlePrediction, addPlay, settlePlay, ledger,
@@ -93,17 +94,39 @@ app.get("/api/odds", h(async (req, res) => {
 app.get("/api/players", h(async (req, res) => {
   const { team, opponent } = req.query;
   if (!team) return res.status(400).json({ error: "parametro 'team' richiesto" });
-  if (!KEYS.apiFootball) return res.json({ source: null, players: [], props: [], note: "API_FOOTBALL_KEY non configurata" });
-  const t = await getTeamId(team, KEYS.apiFootball);
-  const players = await getPlayersStats(t.id, KEYS.apiFootball);
-  const props = buildProps(players);
-  res.json({
-    source: "API-Football",
-    team: toItalian(t.name),
-    opponent: opponent ? toItalian(opponent) : null,
-    players: players.slice(0, 4),
-    props,
-  });
+
+  // 1) Sofascore (la fonte più ricca per i singoli) — funziona se la rete non è bloccata
+  try {
+    const sofa = await getKeyPlayersStats(team, 4);
+    if (sofa.players.length) {
+      return res.json({
+        source: "Sofascore",
+        team: toItalian(team),
+        opponent: opponent ? toItalian(opponent) : null,
+        players: sofa.players,
+        props: buildProps(sofa.players),
+      });
+    }
+  } catch { /* fallback */ }
+
+  // 2) API-Football (se il piano copre la stagione)
+  if (KEYS.apiFootball) {
+    try {
+      const t = await getTeamId(team, KEYS.apiFootball);
+      const players = await getPlayersStats(t.id, KEYS.apiFootball);
+      if (players.length) {
+        return res.json({
+          source: "API-Football",
+          team: toItalian(t.name),
+          opponent: opponent ? toItalian(opponent) : null,
+          players: players.slice(0, 4),
+          props: buildProps(players),
+        });
+      }
+    } catch { /* niente */ }
+  }
+
+  res.json({ source: null, players: [], props: [], note: "Statistiche giocatori non disponibili dalle fonti (Sofascore bloccato da datacenter? prova in locale)." });
 }));
 
 // ——— Voto di una prop quando l'utente inserisce la quota a mano ———

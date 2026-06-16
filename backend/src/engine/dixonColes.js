@@ -181,11 +181,13 @@ export function fitDixonColes(matches, opts = {}) {
 export function expectedGoals(model, idA, idB, opts = {}) {
   const ta = model.teams[idA], tb = model.teams[idB];
   if (!ta || !tb) return null;
-  const g = opts.neutral ? 0 : model.gamma;
-  // Su campo neutro si può comunque dare metà vantaggio alla nazione ospitante;
-  // di default Mondiale = neutro (g=0).
-  const lambda = Math.exp(ta.attack - tb.defense + g);
-  const mu = Math.exp(tb.attack - ta.defense);
+  // Fattore di vantaggio campo per ciascuna squadra (0 = neutro, 1 = casa piena).
+  // Default: partita non-neutra → A jhomeFactor 1; neutra → 0 per entrambe.
+  // Le nazioni ospitanti (USA/Messico/Canada) ricevono un fattore parziale.
+  const fA = opts.homeFactorA ?? (opts.neutral ? 0 : 1);
+  const fB = opts.homeFactorB ?? 0;
+  const lambda = Math.exp(ta.attack - tb.defense + fA * model.gamma);
+  const mu = Math.exp(tb.attack - ta.defense + fB * model.gamma);
   return { lambda: +lambda.toFixed(3), mu: +mu.toFixed(3) };
 }
 
