@@ -112,7 +112,7 @@ app.get("/api/players", h(async (req, res) => {
 
   // 2) ESPN box-score (tiri, falli, cartellini dalle partite del Mondiale) — gratis, funziona ovunque
   try {
-    const espn = await getEspnPlayerStats(team, 6);
+    const espn = await getEspnPlayerStats(team, 10);
     if (espn.players.length) {
       return res.json({
         source: `ESPN box-score (${espn.nEvents} gare WC)`,
