@@ -14,7 +14,7 @@ import {
   getRateRemaining,
 } from "./src/sources/apiFootball.js";
 import { fetchOdds } from "./src/sources/oddsApi.js";
-import { getWorldCupStandings } from "./src/sources/footballData.js";
+import { getWorldCupStandings, getTeamScorerProps } from "./src/sources/footballData.js";
 import { getKeyPlayersStats } from "./src/sources/sofascore.js";
 import { buildProps, votePropWithOdds } from "./src/engine/props.js";
 import {
@@ -126,7 +126,23 @@ app.get("/api/players", h(async (req, res) => {
     } catch { /* niente */ }
   }
 
-  res.json({ source: null, players: [], props: [], note: "Statistiche giocatori non disponibili dalle fonti (Sofascore bloccato da datacenter? prova in locale)." });
+  // 3) football-data.org: props "Marcatore" dai gol/partita reali (gratis, funziona ovunque)
+  if (KEYS.footballData) {
+    try {
+      const sc = await getTeamScorerProps(KEYS.footballData, team);
+      if (sc.props.length) {
+        return res.json({
+          source: sc.source,
+          team: toItalian(team),
+          opponent: opponent ? toItalian(opponent) : null,
+          players: sc.players,
+          props: sc.props,
+        });
+      }
+    } catch { /* niente */ }
+  }
+
+  res.json({ source: null, players: [], props: [], note: "Statistiche giocatori complete non disponibili gratis (Sofascore/FBref bloccati). Marcatori da football-data se la squadra ha già segnato; tiri/falli/cartellini richiedono ESPN o API-Football a pagamento." });
 }));
 
 // ——— Voto di una prop quando l'utente inserisce la quota a mano ———

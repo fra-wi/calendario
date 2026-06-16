@@ -83,8 +83,57 @@ export async function getWorldCupStandings(key, teamName) {
   });
 }
 
-/** Numero di partite Mondiali concluse disponibili (per la diagnostica). */
-export async function countWorldCupMatches(key) {
-  const m = await getWorldCupMatches(key);
-  return m.length;
+/** Capocannonieri del Mondiale (gol/assist per giocatore). */
+export async function getWorldCupScorers(key) {
+  return cached(
+    "fd:wc-scorers",
+    async () => {
+      const j = await fdGet(`/competitions/WC/scorers?limit=100`, key);
+      return (j.scorers || []).map((s) => ({
+        player: s.player?.name,
+        team: s.team?.name,
+        goals: s.goals || 0,
+        assists: s.assists || 0,
+        penalties: s.penalties || 0,
+        played: s.playedMatches || 0,
+      }));
+    },
+    30 * 60 * 1000
+  );
 }
+
+/**
+ * Props "Marcatore" per una nazionale dai gol/partita reali al Mondiale.
+ * P(segna) ≈ 1 - e^(-gol_a_partita) (modello di Poisson sui gol del giocatore).
+ * @returns {object} { source, players[], props[] }
+ */
+export async function getTeamScorerProps(key, teamName) {
+  const en = toEnglish(teamName).toLowerCase();
+  const all = await getWorldCupScorers(key);
+  const mine = all
+    .filter((s) => (s.team || "").toLowerCase().includes(en) || en.includes((s.team || "").toLowerCase()))
+    .filter((s) => s.goals > 0)
+    .slice(0, 5);
+  const players = mine.map((s) => ({
+    name: s.player, pos: "ATT", appearances: s.played, minutes: null,
+    goals: s.goals, assists: s.assists, rating: null,
+    shotsTotal: null, shotsOn: null, foulsCommitted: null, yellow: null, red: null,
+  }));
+  const props = mine.map((s) => {
+    const rate = s.played > 0 ? s.goals / s.played : s.goals;
+    const p = Math.max(0, Math.min(1, 1 - Math.exp(-rate)));
+    return {
+      player: s.player,
+      pos: "ATT",
+      market: "Marcatore (in qualsiasi momento)",
+      pModel: +p.toFixed(3),
+      avg: +rate.toFixed(2),
+      stat: "gol/partita al Mondiale",
+      source: "football-data.org",
+      odds: null,
+      vote: null,
+    };
+  });
+  return { source: "football-data.org (marcatori)", players, props };
+}
+

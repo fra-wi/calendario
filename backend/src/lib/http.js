@@ -26,7 +26,8 @@ export async function fetchJson(url, opts = {}) {
       throw new Error(`risposta non-JSON da ${hostOf(url)} (HTTP ${res.status})`);
     }
     if (!res.ok) {
-      const msg = json?.message || json?.error || `HTTP ${res.status}`;
+      const raw = json?.message || json?.error || `HTTP ${res.status}`;
+      const msg = typeof raw === "string" ? raw : JSON.stringify(raw);
       const err = new Error(`${hostOf(url)}: ${msg}`);
       err.status = res.status;
       err.body = json;
