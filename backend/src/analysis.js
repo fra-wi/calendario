@@ -147,20 +147,19 @@ async function buildDataset(a, b, keys) {
   const all = [];
   const sources = new Set();
 
-  // SPINA DORSALE: risultati internazionali pubblici (amichevoli, qualificazioni,
-  // Nations League, WC). Filtrati a una "ego-network" attorno ad A e B: tutte le
-  // partite di A/B + le partite tra i loro avversari → dataset ricco ma compatto,
-  // così le forze sono ben ancorate e il modello distingue le squadre.
+  // SOLO fonti affidabili e cacheate → risultato DETERMINISTICO (a parità di quote
+  // la giocata consigliata non cambia tra un lancio e l'altro):
+  //  - risultati internazionali pubblici (amichevoli, qualificazioni, Nations League…)
+  //    filtrati a una "ego-network" attorno ad A e B;
+  //  - football-data.org per le partite del Mondiale.
+  // Le fonti traballanti (Sofascore 403, TheSportsDB 0/1 partita) sono escluse: davano
+  // poco e introducevano variabilità tra i lanci.
   let fdMatches = [];
-  const fdTask = keys.footballData
-    ? getWorldCupMatches(keys.footballData).then((m) => { fdMatches = m || []; }).catch(() => {})
-    : Promise.resolve();
-
-  const [intl, histA, histB] = await Promise.all([
+  const [intl] = await Promise.all([
     getInternationalResults(36).catch(() => []),
-    gatherTeamHistory(a, keys.apiFootball),
-    gatherTeamHistory(b, keys.apiFootball),
-    fdTask,
+    keys.footballData
+      ? getWorldCupMatches(keys.footballData).then((m) => { fdMatches = m || []; }).catch(() => {})
+      : Promise.resolve(),
   ]);
 
   if (intl.length) {
@@ -171,19 +170,22 @@ async function buildDataset(a, b, keys) {
     const ego = norm.filter((f) => teams.has(f.homeId) && teams.has(f.awayId));
     if (ego.length) { all.push(...ego); sources.add("risultati internazionali (dataset pubblico)"); }
   }
-
-  // extra: partite del torneo + storia per-squadra (Sofascore/API-Football/TheSportsDB)
   if (fdMatches.length) { all.push(...normAll(fdMatches)); sources.add("football-data.org"); }
-  if (histA.fixtures.length) { all.push(...normAll(histA.fixtures)); if (histA.source) sources.add(histA.source); }
-  if (histB.fixtures.length) { all.push(...normAll(histB.fixtures)); if (histB.source) sources.add(histB.source); }
 
   // dedup (stessa data + stesse squadre + stesso punteggio)
   const seen = new Set();
-  const dataset = all.filter((f) => {
+  let dataset = all.filter((f) => {
     const k = `${(f.date || "").slice(0, 10)}|${f.homeId}|${f.awayId}|${f.gh}-${f.ga}`;
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
+  });
+  // ORDINE FISSO: rende l'indicizzazione delle squadre e la stima riproducibili
+  dataset.sort((x, y) => {
+    const d = (x.date || "").localeCompare(y.date || "");
+    if (d) return d;
+    const h = x.homeId.localeCompare(y.homeId);
+    return h || x.awayId.localeCompare(y.awayId);
   });
 
   const src = [...sources].join(" + ") || null;
