@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { T, FONT_CSS } from "./theme.js";
 import { api } from "./api.js";
-import { TeamCard, MarketsCard, PropsCard, ContextCard } from "./components.jsx";
+import { TeamCard, MarketsCard, PropsCard, ContextCard, RecommendedBet } from "./components.jsx";
 import { Selezioni, Registro } from "./panier.jsx";
 
 export default function App() {
@@ -133,11 +133,14 @@ export default function App() {
           </div>
         )}
 
+        {/* Giocata consigliata (in evidenza) */}
+        {started && <RecommendedBet data={m} loading={match.loading} />}
+
         {/* Sezioni */}
         {started && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14 }}>
-            <TeamCard name={teamA} loading={match.loading} form={m?.form?.a} strength={m?.engine?.strengthA} source={m?.sources?.strengthA} />
-            <TeamCard name={teamB} loading={match.loading} form={m?.form?.b} strength={m?.engine?.strengthB} source={m?.sources?.strengthB} />
+            <TeamCard name={teamA} loading={match.loading} form={m?.form?.a} strength={m?.engine?.strengthA} stats={m?.stats?.a} source={m?.sources?.strengthA} />
+            <TeamCard name={teamB} loading={match.loading} form={m?.form?.b} strength={m?.engine?.strengthB} stats={m?.stats?.b} source={m?.sources?.strengthB} />
             <MarketsCard data={m} loading={match.loading} onAdd={addPick} isAdded={isAdded} matchLabel={matchLabel()} />
             <PropsCard name={teamA} data={playersA.data} loading={playersA.loading} onAdd={addPick} isAdded={isAdded} matchLabel={matchLabel()} onVote={api.voteProp} />
             <PropsCard name={teamB} data={playersB.data} loading={playersB.loading} onAdd={addPick} isAdded={isAdded} matchLabel={matchLabel()} onVote={api.voteProp} />

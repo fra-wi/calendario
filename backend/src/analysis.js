@@ -64,6 +64,49 @@ function computeForm(fixtures, teamId, teamName) {
  * Raccoglie i risultati storici di una squadra: prima API-Football,
  * poi TheSportsDB come fallback. Ritorna { id, name, source, fixtures }.
  */
+/** Statistiche squadra dalle ultime ~10 partite del dataset (gol, clean sheet, V-N-P). */
+function computeTeamStats(dataset, teamId) {
+  const mine = (dataset || [])
+    .filter((f) => f.homeId === teamId || f.awayId === teamId)
+    .sort((x, y) => new Date(y.date) - new Date(x.date))
+    .slice(0, 10);
+  if (!mine.length) return null;
+  let w = 0, d = 0, l = 0, gf = 0, ga = 0, cs = 0;
+  for (const f of mine) {
+    const home = f.homeId === teamId;
+    const g = home ? f.gh : f.ga, a = home ? f.ga : f.gh;
+    gf += g; ga += a;
+    if (a === 0) cs++;
+    if (g > a) w++; else if (g === a) d++; else l++;
+  }
+  const n = mine.length;
+  return {
+    played: n, w, d, l,
+    gfAvg: +(gf / n).toFixed(2),
+    gaAvg: +(ga / n).toFixed(2),
+    cleanSheets: cs,
+  };
+}
+
+/**
+ * Giocata consigliata: NON la quota più alta, ma l'ESITO PIÙ PROBABILE (modello)
+ * la cui quota reale cade nella fascia 1.6–2.1. Se nessuno è in fascia, allarga
+ * a 1.5–2.5. Restituisce null se non ci sono quote reali.
+ */
+function recommendedBet(rows) {
+  const withOdds = (rows || []).filter((r) => r.hasOdds && r.odds != null);
+  if (!withOdds.length) return null;
+  const inBand = (lo, hi) => withOdds.filter((r) => r.odds >= lo && r.odds <= hi);
+  let pool = inBand(1.6, 2.1);
+  let fascia = "1.6–2.1";
+  if (!pool.length) { pool = inBand(1.5, 2.5); fascia = "1.5–2.5"; }
+  if (!pool.length) return null;
+  // l'esito più probabile nella fascia
+  pool.sort((p, q) => q.pModel - p.pModel);
+  const pick = pool[0];
+  return { market: pick.market, odds: pick.odds, pModel: pick.pModel, pImplied: pick.pImplied, vote: pick.vote, edge: pick.edge, fascia };
+}
+
 /**
  * Storia AMPIA per-squadra (amichevoli, qualificazioni, Nations League, WC…):
  * le ultime ~N partite della nazionale across TUTTE le competizioni.
@@ -187,6 +230,10 @@ export async function analyzeMatch(a, b, keys = {}, opts = {}) {
       a: computeForm(dataset, teamA.id, teamA.name),
       b: computeForm(dataset, teamB.id, teamB.name),
     },
+    stats: {
+      a: computeTeamStats(dataset, teamA.id),
+      b: computeTeamStats(dataset, teamB.id),
+    },
     odds: odds && odds.found ? { nBook: odds.nBook, commence_time: odds.commence_time } : null,
   };
 
@@ -224,6 +271,7 @@ export async function analyzeMatch(a, b, keys = {}, opts = {}) {
   result.markets = rows; // ciascuna: { market, odds, pModel, pImplied, edge, vote, hasOdds }
   result.exact = exact; // risultati esatti più probabili
   result.best = best; // ★ miglior valore (o null se nessun valore)
+  result.consigliata = recommendedBet(rows); // esito più probabile in fascia 1.6–2.1
   result.hasRealOdds = hasRealOdds;
 
   // 6) Log delle previsioni principali per la calibrazione (dedup gestito altrove)

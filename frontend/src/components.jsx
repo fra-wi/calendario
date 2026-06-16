@@ -105,8 +105,50 @@ export function AddBtn({ onClick, added }) {
   );
 }
 
-// ——— Card squadra: forma + forza attacco/difesa stimata + fonte ———
-export function TeamCard({ name, form, strength, source, loading }) {
+// ——— GIOCATA CONSIGLIATA: esito più probabile in fascia quota 1.6–2.1 ———
+export function RecommendedBet({ data, loading }) {
+  if (loading) {
+    return (
+      <div style={{ background: T.panel, border: `1px solid ${T.panelEdge}`, borderRadius: 12, padding: "18px 20px", marginBottom: 14 }}>
+        <Skeleton lines={1} status="calcolo la giocata consigliata…" />
+      </div>
+    );
+  }
+  if (!data?.engine?.ok) return null;
+  const c = data.consigliata;
+  return (
+    <div style={{ background: `linear-gradient(135deg, ${T.panel}, ${T.bg})`, border: `2px solid ${T.signal}`, borderRadius: 12, padding: "16px 20px", marginBottom: 14 }}>
+      <Label>Giocata consigliata · esito più probabile (quota {c?.fascia || "1.6–2.1"})</Label>
+      {c ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap" }}>
+          <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: 700, fontSize: "clamp(30px,6vw,46px)", color: T.signal, lineHeight: 1 }}>
+            {c.market}
+          </div>
+          <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: 700, fontSize: 34, color: T.chalk }}>
+            @{c.odds}
+          </div>
+          <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+            <div>
+              <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 9, color: T.chalkDim, letterSpacing: "0.1em" }}>PROBABILITÀ MODELLO</div>
+              <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: 700, fontSize: 28, color: T.win }}>{pct(c.pModel)}</div>
+            </div>
+            <Vote v={c.vote} />
+          </div>
+        </div>
+      ) : (
+        <div style={{ fontFamily: "'Barlow',sans-serif", fontSize: 14, color: T.chalkDim }}>
+          Nessun esito con quota nella fascia consigliata (1.5–2.5). Guarda la lavagna mercati qui sotto.
+        </div>
+      )}
+      <div style={{ fontFamily: "'Barlow',sans-serif", fontSize: 12, color: T.chalkDim, marginTop: 8 }}>
+        È l'esito più probabile secondo il modello con quota "giocabile", non la quota più alta. Valuta sempre tu prima di puntare.
+      </div>
+    </div>
+  );
+}
+
+// ——— Card squadra: forma + forza attacco/difesa stimata + statistiche + fonte ———
+export function TeamCard({ name, form, strength, stats, source, loading }) {
   // forza in scala leggibile: exp(attack) ~ moltiplicatore gol; mostriamo indice 0-10
   const idx = (v) => (v == null ? null : Math.max(0, Math.min(10, 5 + v * 4)).toFixed(1));
   return (
@@ -132,6 +174,14 @@ export function TeamCard({ name, form, strength, source, loading }) {
             </>
           ) : (
             <div style={{ fontFamily: "'Barlow',sans-serif", fontSize: 12, color: T.chalkDim }}>Forze non stimabili: dati storici insufficienti.</div>
+          )}
+          {stats && (
+            <div style={{ marginTop: 12 }}>
+              <Stat k="Bilancio (ultime 10)" v={`${stats.w}V ${stats.d}N ${stats.l}P`} />
+              <Stat k="Gol fatti / partita" v={stats.gfAvg} />
+              <Stat k="Gol subiti / partita" v={stats.gaAvg} />
+              <Stat k="Clean sheet (su 10)" v={stats.cleanSheets} />
+            </div>
           )}
         </>
       )}
