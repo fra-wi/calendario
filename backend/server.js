@@ -16,6 +16,7 @@ import {
 import { fetchOdds } from "./src/sources/oddsApi.js";
 import { getWorldCupStandings, getTeamScorerProps } from "./src/sources/footballData.js";
 import { getKeyPlayersStats } from "./src/sources/sofascore.js";
+import { getEspnPlayerStats } from "./src/sources/espnPlayers.js";
 import { buildProps, votePropWithOdds } from "./src/engine/props.js";
 import {
   calibration, settlePrediction, addPlay, settlePlay, ledger,
@@ -109,7 +110,21 @@ app.get("/api/players", h(async (req, res) => {
     }
   } catch { /* fallback */ }
 
-  // 2) API-Football (se il piano copre la stagione)
+  // 2) ESPN box-score (tiri, falli, cartellini dalle partite del Mondiale) — gratis, funziona ovunque
+  try {
+    const espn = await getEspnPlayerStats(team, 6);
+    if (espn.players.length) {
+      return res.json({
+        source: `ESPN box-score (${espn.nEvents} gare WC)`,
+        team: toItalian(team),
+        opponent: opponent ? toItalian(opponent) : null,
+        players: espn.players,
+        props: buildProps(espn.players),
+      });
+    }
+  } catch { /* fallback */ }
+
+  // 3) API-Football (se il piano copre la stagione)
   if (KEYS.apiFootball) {
     try {
       const t = await getTeamId(team, KEYS.apiFootball);

@@ -13,6 +13,7 @@ import { getRecentMatches as sofaRecentMatches, sampleStatKeys, getKeyPlayersSta
 import { getInternationalResults } from "./sources/intlResults.js";
 import { getWorldCupMatches } from "./sources/footballData.js";
 import { fetchFixtures } from "./sources/espn.js";
+import { sampleEspn, getEspnPlayerStats } from "./sources/espnPlayers.js";
 
 const probe = async (name, fn) => {
   const t0 = Date.now();
@@ -116,6 +117,18 @@ export async function runDiagnostics(keys, a = "Francia", b = "Senegal") {
     probe(`TheSportsDB (${enB})`, async () => {
       const f = await fetchRecentForm(enB);
       return f ? { partite: f.nMatches, gfAvg: f.gfAvg, gsAvg: f.gsAvg } : { partite: 0, nota: "nessun dato" };
+    }),
+
+    // 3d) ESPN giocatori — props tiri/falli/cartellini + etichette grezze (per tarare)
+    probe(`ESPN giocatori (${enA})`, async () => {
+      const s = await sampleEspn(enA).catch((e) => ({ errore: e.message }));
+      const st = await getEspnPlayerStats(enA, 6).catch(() => ({ players: [], nEvents: 0 }));
+      return {
+        gareWcConcluse: st.nEvents,
+        giocatoriConStat: st.players.length,
+        esempio: st.players[0] ? `${st.players[0].name}: ${st.players[0].shotsTotal} tiri, ${st.players[0].foulsCommitted} falli in ${st.players[0].appearances} gare` : null,
+        etichetteBoxscore: s.categorie || s.nota || s.errore,
+      };
     }),
 
     // 4) ESPN — calendario
