@@ -43,6 +43,32 @@ async function afGet(path, key) {
   return json?.response || [];
 }
 
+/**
+ * Stato dell'account API-Football: piano, richieste usate/limite.
+ * Serve alla diagnostica per capire se il piano copre la stagione 2026.
+ */
+export async function getStatus(key) {
+  if (!key) throw new Error("API_FOOTBALL_KEY mancante");
+  const { json, headers } = await fetchJson(`${BASE}/status`, {
+    headers: { "x-apisports-key": key },
+    timeout: 8000,
+  });
+  const rem = headers.get("x-ratelimit-requests-remaining");
+  if (rem != null) rateRemaining = Number(rem);
+  if (json && json.errors && Object.keys(json.errors).length) {
+    throw new Error(`API-Football: ${Object.values(json.errors).join("; ")}`);
+  }
+  const r = json?.response || {};
+  return {
+    account: r.account ? `${r.account.firstname || ""} ${r.account.lastname || ""}`.trim() : null,
+    plan: r.subscription?.plan || null,
+    active: r.subscription?.active,
+    end: r.subscription?.end || null,
+    requestsToday: r.requests?.current,
+    requestsLimit: r.requests?.limit_day,
+  };
+}
+
 /** Trova (e cachea) l'id della lega "World Cup". */
 export async function getWorldCupLeagueId(key) {
   return cached(

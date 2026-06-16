@@ -19,6 +19,7 @@ import {
   calibration, settlePrediction, addPlay, settlePlay, ledger,
 } from "./src/engine/calibration.js";
 import { tacticalNote, llmAvailable } from "./src/llm/anthropic.js";
+import { runDiagnostics } from "./src/diag.js";
 import { toEnglish, toItalian } from "./src/lib/nameMap.js";
 
 const app = express();
@@ -53,6 +54,13 @@ app.get("/api/health", (req, res) => {
     now: new Date().toISOString(),
   });
 });
+
+// ——— Diagnostica fonti: interroga ogni API e dice cosa risponde davvero ———
+app.get("/api/diag", h(async (req, res) => {
+  const a = req.query.a || "Francia";
+  const b = req.query.b || "Senegal";
+  res.json(await runDiagnostics(KEYS, a, b));
+}));
 
 // ——— Calendario Mondiali (ESPN) ———
 app.get("/api/fixtures", h(async (req, res) => {
